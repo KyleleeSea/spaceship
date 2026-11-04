@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battle Plan — P2P Fleet Combat</title>
+<meta name="description" content="Two commanders draft fleets and battle plans, then watch their AI-piloted ships fight. Peer-to-peer, deterministic lockstep, pause to issue new orders.">
+<link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">BATTLE <span>PLAN</span></div>
+    <div id="topstatus" class="topstatus"></div>
+  </header>
+
+  <!-- ================= LOBBY ================= -->
+  <section id="screen-lobby" class="screen">
+    <div class="hero">
+      <h1>Draft a fleet. Write the plan. Watch it fight.</h1>
+      <p>Two commanders build fleets and give standing orders. The ships fly themselves. Pause the battle to rewrite the plan.</p>
+    </div>
+    <div class="lobby-grid">
+      <div class="card">
+        <h2>Host a match</h2>
+        <p class="muted">Create a room and send the code to a friend.</p>
+        <button id="btn-host" class="primary">Create room</button>
+        <div id="host-box" hidden>
+          <div class="code-big" id="host-code">·····</div>
+          <button id="btn-copy" class="ghost">Copy invite link</button>
+          <div id="host-wait" class="muted">Waiting for an opponent…</div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Join a match</h2>
+        <p class="muted">Enter the 5-character room code.</p>
+        <div class="row">
+          <input id="join-code" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false">
+          <button id="btn-join" class="primary">Join</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Practice</h2>
+        <p class="muted">Fight a local AI commander. Same engine, no network.</p>
+        <button id="btn-bot" class="primary">Fight the AI</button>
+      </div>
+    </div>
+    <div id="lobby-status" class="status"></div>
+    <details class="howto">
+      <summary>How it works</summary>
+      <ul>
+        <li><b>Peer-to-peer.</b> The two browsers talk directly over WebRTC. No game server: a tiny signaling service only brokers the connection.</li>
+        <li><b>Lockstep determinism.</b> Both machines run the identical simulation and only exchange orders. Every turn is hashed and compared, so any divergence is detected.</li>
+        <li><b>Pause to re-plan.</b> Each commander gets a limited number of pauses. While paused, both sides can rewrite orders; the pauser decides when to resume.</li>
+        <li><b>Rebalance.</b> The host can set per-player budgets, pause counts, time limit, and a loser bonus that grows the losing fleet each rematch.</li>
+      </ul>
+    </details>
+  </section>
+
+  <!-- ================= PLANNING ================= -->
+  <section id="screen-plan" class="screen" hidden>
+    <div class="plan-layout">
+      <aside class="panel" id="settings-panel">
+        <h2>Match settings</h2>
+        <p class="muted" id="settings-note">Host sets the rules. Both players see them.</p>
+        <label><span>Budget — <span class="t0">Cyan</span></span><input id="set-budget0" type="number" min="12" max="80"></label>
+        <label><span>Budget — <span class="t1">Amber</span></span><input id="set-budget1" type="number" min="12" max="80"></label>
+        <label>Pauses per player<input id="set-pauses" type="number" min="0" max="6"></label>
+        <label>Max pause length (s)<input id="set-pauselen" type="number" min="10" max="60"></label>
+        <label>Time limit (s)<input id="set-time" type="number" min="45" max="300"></label>
+        <label>Loser bonus per rematch<input id="set-bonus" type="number" min="0" max="8"></label>
+        <label class="check"><input id="set-live" type="checkbox"> Allow live orders (no pause needed)</label>
+        <div class="muted small">Handicap tip: give the weaker player a bigger budget, or more pauses.</div>
+        <h2 class="mt">Score</h2>
+        <div id="score-line" class="score">Cyan 0 — 0 Amber</div>
+      </aside>
+
+      <main class="panel" id="fleet-panel">
+        <div class="fleet-head">
+          <h2>Your fleet <span id="side-tag" class="tag"></span></h2>
+          <div class="budget"><span id="fleet-cost">0</span> / <span id="fleet-budget">0</span> pts</div>
+        </div>
+        <div class="presets">
+          <span class="muted">Presets:</span>
+          <button data-preset="balanced" class="ghost small">Balanced</button>
+          <button data-preset="swarm" class="ghost small">Swarm</button>
+          <button data-preset="wall" class="ghost small">Iron Wall</button>
+          <button data-preset="artillery" class="ghost small">Artillery</button>
+        </div>
+        <div id="ship-list"></div>
+        <div class="row">
+          <button id="btn-add-ship" class="ghost">+ Add ship</button>
+        </div>
+        <div id="fleet-errors" class="errors"></div>
+        <div class="ready-row">
+          <button id="btn-ready" class="primary big">Ready</button>
+          <div id="opp-status" class="muted">Opponent is drafting…</div>
+        </div>
+      </main>
+
+      <aside class="panel codex" id="codex">
+        <h2>Field manual</h2>
+        <h3>Weapons</h3>
+        <ul id="codex-weapons"></ul>
+        <h3>Modules</h3>
+        <ul id="codex-modules"></ul>
+        <h3>Hulls</h3>
+        <ul id="codex-hulls"></ul>
+        <h3>Stances</h3>
+        <ul id="codex-stances"></ul>
+        <h3>Rock, paper, scissors</h3>
+        <p class="small">Lasers melt shields but armor shrugs them off. Railguns crack armor but miss interceptors. Missiles outrange everything, but flak shoots them down. Flak shreds swarms and is useless against armor.</p>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ================= BATTLE ================= -->
+  <section id="screen-battle" class="screen" hidden>
+    <div class="battle-layout">
+      <div id="canvas-wrap">
+        <canvas id="game"></canvas>
+        <div id="overlay-pause" class="overlay" hidden>
+          <div class="overlay-box">
+            <div class="overlay-title" id="pause-title">PAUSED</div>
+            <div class="overlay-sub" id="pause-sub"></div>
+            <button id="btn-resume-overlay" class="primary">Resume</button>
+          </div>
+        </div>
+        <div id="overlay-wait" class="overlay thin" hidden><div class="overlay-box small">Waiting for opponent…</div></div>
+        <div id="overlay-result" class="overlay" hidden>
+          <div class="overlay-box">
+            <div class="overlay-title" id="result-title">VICTORY</div>
+            <div class="overlay-sub" id="result-sub"></div>
+            <div id="result-stats" class="result-stats"></div>
+            <div class="row center">
+              <button id="btn-rematch" class="primary">Rematch</button>
+              <button id="btn-leave" class="ghost">Leave</button>
+            </div>
+          </div>
+        </div>
+        <div id="overlay-disc" class="overlay" hidden>
+          <div class="overlay-box">
+            <div class="overlay-title">DISCONNECTED</div>
+            <div class="overlay-sub" id="disc-sub"></div>
+            <button id="btn-disc-leave" class="primary">Back to lobby</button>
+          </div>
+        </div>
+        <div id="banner" class="banner" hidden></div>
+      </div>
+      <aside class="panel" id="battle-panel">
+        <div class="hud">
+          <div class="hud-row"><span class="muted">Time</span><span id="hud-time">0:00</span></div>
+          <div class="hud-row"><span class="t0">Cyan</span><div class="bar"><div id="bar0" class="fill t0bg"></div></div></div>
+          <div class="hud-row"><span class="t1">Amber</span><div class="bar"><div id="bar1" class="fill t1bg"></div></div></div>
+          <div class="hud-row"><span class="muted">Pauses</span><span id="hud-pauses"></span></div>
+        </div>
+        <button id="btn-pause" class="primary big">Pause</button>
+        <div id="orders-hint" class="muted small"></div>
+        <h2>Orders</h2>
+        <div id="battle-orders"></div>
+        <h2>Log</h2>
+        <div id="battle-log" class="log"></div>
+      </aside>
+    </div>
+  </section>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
