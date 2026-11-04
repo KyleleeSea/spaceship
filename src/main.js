@@ -456,6 +456,8 @@ setInterval(() => {
   let dt = (now - last) / 1000; last = now;
   if (dt > 0.25) dt = 0.25;
   advance(dt);
+  updateHud();
+  if (app.sim.over && !app.resultShown) showResult();
 }, 100);
 window.addEventListener('resize', () => { if (app.screen === 'battle') renderer.resize(); });
 window.addEventListener('beforeunload', () => { try { app.link && app.link.send({ type: 'leave' }); } catch (_) { /* ignore */ } });
